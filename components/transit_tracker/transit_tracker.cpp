@@ -100,12 +100,16 @@ void TransitTracker::setup() {
     this->ws_client_.set_user_agent(user_agent);
     this->ws_client_.set_headers(headers);
     this->alert_fetcher_.set_user_agent(user_agent);
+    this->vlille_fetcher_.set_user_agent(user_agent);
   }
 
   // The alerts task is always started once an URL has been configured (in YAML or at runtime);
   // it idles while the URL is empty.
   if (this->alerts_configured_) {
     this->alert_fetcher_.start();
+  }
+  if (this->vlille_configured_) {
+    this->vlille_fetcher_.start();
   }
   this->setup_done_ = true;
 
@@ -203,6 +207,7 @@ void TransitTracker::on_shutdown() {
   this->cancel_interval("check_stale_trips");
   this->close(true);
   this->alert_fetcher_.stop();
+  this->vlille_fetcher_.stop();
 }
 
 void TransitTracker::on_disconnect_() {
@@ -616,6 +621,15 @@ void HOT TransitTracker::draw_schedule() {
     }
   }
 
+  {
+    const VlilleStation *station = nullptr;
+    uint32_t elapsed = 0;
+    if (this->select_vlille_(millis(), station, elapsed)) {
+      this->draw_vlille_(*station, elapsed);
+      return;
+    }
+  }
+
   if (this->base_url_.empty()) {
     this->draw_text_centered_("URL non configurée", Color(0x252627));
     return;
@@ -634,7 +648,7 @@ void HOT TransitTracker::draw_schedule() {
   std::lock_guard<std::mutex> lock(this->schedule_state_.mutex);
 
   if (this->schedule_state_.trips.empty()) {
-    auto message = this->display_departure_times_ ? "Aucun départ prévu" : "Aucune arrivée prévue";
+    auto message = "Aucun départ prévu";
     this->draw_text_centered_(message, Color(0x252627));
     return;
   }

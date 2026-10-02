@@ -16,6 +16,7 @@
 #include "localization.h"
 #include "websocket_client.h"
 #include "alerts.h"
+#include "vlille.h"
 
 namespace esphome {
 namespace transit_tracker {
@@ -150,6 +151,23 @@ class TransitTracker : public Component {
     /// Enter/exit transition of the date and time
     void set_clock_animation(ClockAnimation animation) { this->clock_animation_ = animation; }
 
+    // --- V'Lille screen ---
+    void set_vlille_url(const std::string &url) { this->vlille_fetcher_.set_url(url); }
+    void set_vlille_update_interval(uint32_t ms) { this->vlille_fetcher_.set_interval_ms(ms); }
+    void set_vlille_timeout(uint32_t ms) { this->vlille_fetcher_.set_timeout_ms(ms); }
+    void set_vlille_configured() { this->vlille_configured_ = true; }
+    /// Station names (or parts of names) or IDs, separated by commas or semicolons. One screen per station.
+    void set_vlille_stations(const std::string &text) { this->vlille_fetcher_.set_stations(text); }
+    void set_vlille_enabled(bool enabled);
+    bool get_vlille_enabled() const { return this->vlille_enabled_; }
+    /// Time between two passes over the stations
+    void set_vlille_interval(uint32_t ms) { this->vlille_interval_ms_ = ms; }
+    /// How long each station stays on screen
+    void set_vlille_duration(uint32_t ms) { this->vlille_duration_ms_ = std::max<uint32_t>(ms, 1000); }
+    void set_vlille_logo_color(const Color &color) { this->vlille_logo_color_ = color; }
+    /// Human-readable summary of the matched stations, for a text sensor.
+    std::string get_vlille_status();
+
   protected:
     static constexpr int scroll_speed = 10; // pixels/second
     static constexpr int idle_time_left = 5000;
@@ -261,6 +279,19 @@ class TransitTracker : public Component {
     Color clock_date_color_ = Color(0xFFFFFF);
     Color clock_time_color_ = Color(0xFFFFFF);
     ClockAnimation clock_animation_ = CLOCK_ANIMATION_SLIDE;
+
+    bool select_vlille_(unsigned long now_ms, const VlilleStation *&station, uint32_t &elapsed);
+    void draw_vlille_(const VlilleStation &station, uint32_t elapsed);
+
+    VlilleFetcher vlille_fetcher_;
+    bool vlille_configured_ = false;
+    bool vlille_enabled_ = false;
+    unsigned long vlille_rotation_start_ = 0;
+    uint32_t vlille_interval_ms_ = 60000;
+    uint32_t vlille_duration_ms_ = 6000;
+    uint32_t vlille_generation_seen_ = 0;
+    std::vector<VlilleStation> vlille_stations_;
+    Color vlille_logo_color_ = Color(0xE73137);
 
     bool show_cancelled_ = true;
     std::string cancelled_rail_text_ = "Interrompu";

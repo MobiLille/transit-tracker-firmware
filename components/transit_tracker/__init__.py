@@ -96,6 +96,9 @@ CONF_DURATION = "duration"
 CONF_DATE_COLOR = "date_color"
 CONF_TIME_COLOR = "time_color"
 CONF_ANIMATION = "animation"
+CONF_VLILLE = "vlille"
+CONF_STATIONS = "stations"
+CONF_LOGO_COLOR = "logo_color"
 ALERT_KEY_NAMES = [
     "list", "id", "title", "message", "severity", "route", "color", "active", "start", "end", "important",
 ]
@@ -234,6 +237,34 @@ CLOCK_SCHEMA = cv.Schema(
 )
 
 
+VLILLE_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_URL, default="https://api.mobilille.fr/v1/vlille/"): validate_http_url,
+        # Names (or parts of names) or IDs, separated by commas; one screen per station.
+        # Usually set at runtime from a text entity instead.
+        cv.Optional(CONF_STATIONS, default=""): cv.string,
+        # Initial state; can be toggled at runtime with set_vlille_enabled()
+        cv.Optional(CONF_SHOW, default=True): cv.boolean,
+        cv.Optional(CONF_UPDATE_INTERVAL, default="60s"): cv.All(
+            cv.positive_time_period_milliseconds,
+            cv.Range(min=cv.TimePeriod(seconds=15)),
+        ),
+        cv.Optional(CONF_TIMEOUT, default="10s"): cv.positive_time_period_milliseconds,
+        # Time between two passes over the stations
+        cv.Optional(CONF_INTERVAL, default="60s"): cv.All(
+            cv.positive_time_period_milliseconds,
+            cv.Range(min=cv.TimePeriod(seconds=5)),
+        ),
+        # How long each station stays on screen
+        cv.Optional(CONF_DURATION, default="6s"): cv.All(
+            cv.positive_time_period_milliseconds,
+            cv.Range(min=cv.TimePeriod(seconds=1)),
+        ),
+        cv.Optional(CONF_LOGO_COLOR): COLOR_SCHEMA,
+    }
+)
+
+
 CONFIG_SCHEMA = cv.All(
     validate_esphome_version,
     cv.only_on_esp32,
@@ -294,6 +325,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ALERTS): ALERTS_SCHEMA,
             cv.Optional(CONF_CANCELLED, default={}): CANCELLED_SCHEMA,
             cv.Optional(CONF_CLOCK): CLOCK_SCHEMA,
+            cv.Optional(CONF_VLILLE): VLILLE_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _consume_transit_tracker_sockets,
@@ -376,6 +408,9 @@ async def to_code(config):
     if CONF_CLOCK in config:
         await _clock_to_code(var, config[CONF_CLOCK])
 
+    if CONF_VLILLE in config:
+        await _vlille_to_code(var, config[CONF_VLILLE])
+
     await cg.register_component(var, config)
 
     add_idf_component(
@@ -442,6 +477,20 @@ async def _alerts_to_code(var, conf):
     if not conf[CONF_URL]:
         # Enable the feature so the URL can be provided later at runtime
         cg.add(var.set_alerts_configured())
+
+
+async def _vlille_to_code(var, conf):
+    cg.add(var.set_vlille_configured())
+    cg.add(var.set_vlille_url(conf[CONF_URL]))
+    cg.add(var.set_vlille_update_interval(conf[CONF_UPDATE_INTERVAL]))
+    cg.add(var.set_vlille_timeout(conf[CONF_TIMEOUT]))
+    cg.add(var.set_vlille_interval(conf[CONF_INTERVAL]))
+    cg.add(var.set_vlille_duration(conf[CONF_DURATION]))
+    if conf[CONF_STATIONS]:
+        cg.add(var.set_vlille_stations(conf[CONF_STATIONS]))
+    if CONF_LOGO_COLOR in conf:
+        cg.add(var.set_vlille_logo_color(await cg.get_variable(conf[CONF_LOGO_COLOR])))
+    cg.add(var.set_vlille_enabled(conf[CONF_SHOW]))
 
 
 async def _clock_to_code(var, conf):

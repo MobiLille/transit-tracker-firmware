@@ -146,6 +146,17 @@ switch:
     turn_off_action:
       - lambda: id(tracker).set_clock_enabled(false);
   - platform: template
+    id: vlille_enabled_config
+    name: "Écran V'Lille"
+    icon: "mdi:bicycle"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: "config"
+    turn_on_action:
+      - lambda: id(tracker).set_vlille_enabled(true);
+    turn_off_action:
+      - lambda: id(tracker).set_vlille_enabled(false);
+  - platform: template
     id: auto_update_config
     name: "Auto-Update"
     icon: "mdi:update"
@@ -216,6 +227,18 @@ text:
       then:
         lambda: |
           id(tracker).set_route_styles_from_text(id(route_styles_config)->state);
+  - <<: *config_text_common
+    id: vlille_stations_config
+    name: "Stations V'Lille"
+    icon: "mdi:bicycle"
+    entity_category: "config"
+    # Noms (ou parties de noms) ou numéros, séparés par des virgules. Un écran par station.
+    # Ex. : « Place Richebe, Rue Royale, 278317 ». Conservé après un redémarrage.
+    initial_value: ""
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).set_vlille_stations(id(vlille_stations_config)->state);
   - <<: *config_text_common
     id: alerts_url_config
     name: "URL des alertes"
@@ -353,6 +376,23 @@ number:
     on_value:
       then:
         - lambda: id(tracker).set_clock_duration(x * 1000);
+
+  - platform: template
+    id: vlille_duration_config
+    name: "Durée écran V'Lille"
+    icon: "mdi:timer-outline"
+    entity_category: "config"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 1
+    max_value: 60
+    step: 1
+    initial_value: 6
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        - lambda: id(tracker).set_vlille_duration(x * 1000);
 
 output:
   - platform: template
@@ -493,6 +533,12 @@ lis3dh:
 debug:
 
 text_sensor:
+  - platform: template
+    name: "Stations V'Lille trouvées"
+    icon: "mdi:bicycle"
+    entity_category: "diagnostic"
+    update_interval: 30s
+    lambda: return id(tracker).get_vlille_status();
   - platform: debug
     device:
       name: "Device Info"
@@ -615,6 +661,13 @@ transit_tracker:
   clock:
     interval: 60s   # temps entre deux affichages
     duration: 5s    # durée d'affichage (remplacée par « Durée écran date et heure » du tableau de bord)
+  # Écran V'Lille : vélos et places libres, un écran par station choisie
+  # (stations à saisir dans « Stations V'Lille » sur le tableau de bord)
+  vlille:
+    url: "https://api.mobilille.fr/v1/vlille/"   # ?simple=1 pour trouver les stations, ?ids=… pour leurs données
+    update_interval: 60s   # rafraîchissement des données
+    interval: 60s          # temps entre deux passages sur les stations
+    duration: 6s           # durée par station (remplacée par « Durée écran V'Lille »)
   # Courses annulées / arrêts non desservis (GTFS-RT). Nécessite l'API modifiée.
   cancelled:
     rail_text: "Interrompu"     # métro, tram, train
