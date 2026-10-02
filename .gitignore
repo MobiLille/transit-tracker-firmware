@@ -1,1 +1,6 @@
-components/.DS_Store
+# Gitignore settings for ESPHome
+/.esphome/
+/secrets.yaml
+/.venv/
+.DS_Store
+__pycache__/

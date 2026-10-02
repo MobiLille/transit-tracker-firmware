@@ -1,0 +1,18 @@
+{
+  "name": "Transit Tracker MobiLille",
+  "version": "VERSION",
+  "home_assistant_domain": "esphome",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [{ "path": "FACTORY_BIN_URL", "offset": 0 }],
+      "ota": {
+        "path": "OTA_BIN_URL",
+        "md5": "OTA_BIN_MD5",
+        "release_url": "RELEASE_URL",
+        "summary": "RELEASE_SUMMARY"
+      }
+    }
+  ]
+}

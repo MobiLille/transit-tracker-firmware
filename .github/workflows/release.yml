@@ -1,0 +1,83 @@
+# Compile le firmware à chaque tag vX.Y.Z, l'attache à une Release GitHub et publie
+# le manifeste sur GitHub Pages. Les appareils le lisent via le composant `update:`.
+name: Release firmware
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à publier (ex. v1.2.0)"
+        required: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  BASE_URL: https://mobilille.github.io/transit-tracker-firmware/firmware
+
+jobs:
+  build:
+    name: Compile et publie
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Installer ESPHome
+        run: pip install esphome==2026.9.1
+
+      - name: Compiler
+        run: |
+          esphome -s project_version "$VERSION" compile transit-tracker.yaml
+          mkdir -p site/firmware
+          cp .esphome/build/transit-tracker/build/firmware.ota.bin site/firmware/
+          cp .esphome/build/transit-tracker/build/firmware.factory.bin site/firmware/
+
+      - name: Créer la Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$VERSION" >/dev/null 2>&1 || \
+            gh release create "$VERSION" --title "$VERSION" --generate-notes --target "$GITHUB_SHA"
+          gh release upload "$VERSION" site/firmware/*.bin --clobber
+
+      - name: Générer le manifeste
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
+          summary=$(gh release view "$VERSION" --json name --jq .name)
+          md5=$(md5sum site/firmware/firmware.ota.bin | cut -d ' ' -f 1)
+          sed -e "s@VERSION@${VERSION}@" \
+              -e "s@FACTORY_BIN_URL@${BASE_URL}/firmware.factory.bin@" \
+              -e "s@OTA_BIN_URL@${BASE_URL}/firmware.ota.bin@" \
+              -e "s@OTA_BIN_MD5@${md5}@" \
+              -e "s@RELEASE_URL@${release_url}@" \
+              -e "s@RELEASE_SUMMARY@${summary}@" \
+              manifest-template.json > site/firmware/manifest.json
+          cat site/firmware/manifest.json
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Déployer sur GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
