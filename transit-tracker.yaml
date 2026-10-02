@@ -1,0 +1,625 @@
+substitutions:
+  name: "transit-tracker"
+  friendly_name: "Transit Tracker"
+  project_version: "dev"
+  pixolletta_file_path: "https://raw.githubusercontent.com/EastsideUrbanism/transit-tracker/main/firmware/fonts/Pixolletta8px.ttf"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: true
+  min_version: 2026.8.1
+  project:
+    name: "Eastside Urbanism.Transit Tracker"
+    version: ${project_version}
+
+dashboard_import:
+  package_import_url: github://EastsideUrbanism/transit-tracker/firmware/transit-tracker.yaml@${project_version}
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: quad
+  speed: 80MHz
+
+globals:
+  - id: ota_progress
+    type: float
+    restore_value: false
+
+external_components:
+  - source: github://pr#13921
+    components: [ hub75 ]
+    refresh: 1h
+  - source: github://tjhorner/esphome-custom-components@157c1c216ab296fd2cecc197728f9cbb909344d3
+    components: [ serial_rpc, lis3dh, project_version ]
+  # Composant Transit Tracker avec l'écran d'alertes.
+  # Option A (la plus simple) : dossier local "components/transit_tracker" à côté de ce fichier
+  - source:
+      type: local
+      path: components
+    components: [ transit_tracker ]
+  # Option B : votre fork GitHub (remplacez VOTRE_COMPTE et supprimez l'option A)
+  # - source: github://VOTRE_COMPTE/esphome-transit-tracker@feature/alert-screen
+  #   components: [ transit_tracker ]
+  #   refresh: 1h
+
+logger:
+  level: DEBUG
+
+wifi:
+  power_save_mode: none
+  ap:
+    password: "hunter2hunter2"
+
+captive_portal:
+
+api:
+  reboot_timeout: 0s
+
+http_request:
+  verify_ssl: true
+  watchdog_timeout: 120s
+
+ota:
+  - platform: http_request
+    id: ota_http_request
+    on_begin:
+      then:
+        - display.page.show: ota_progress_page
+        - component.update: matrix
+    on_error:
+      then:
+        - sensor.template.publish:
+            id: last_ota_error
+            state: !lambda return x;
+        - display.page.show: transit_schedule
+    on_end:
+      then:
+        - lambda: id(ota_progress) = 100.0f;
+        - component.update: matrix
+    on_progress:
+      then:
+        - lambda: id(ota_progress) = x;
+        - component.update: matrix
+  - platform: esphome
+    id: ota_esphome
+    password: ""
+
+update:
+  - platform: http_request
+    id: update_http_request
+    name: Firmware Update
+    source: https://transit-tracker.eastsideurbanism.org/firmware/manifest.json
+    on_update_available:
+      then:
+        - script.execute: update_firmware
+
+switch:
+  - platform: template
+    id: flip_display_config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: |-
+          id(matrix).set_rotation(esphome::display::DisplayRotation::DISPLAY_ROTATION_180_DEGREES);
+    turn_off_action:
+      - lambda: |-
+          id(matrix).set_rotation(esphome::display::DisplayRotation::DISPLAY_ROTATION_0_DEGREES);
+  - platform: template
+    id: scroll_headsigns_config
+    name: "Scroll Headsigns"
+    icon: "mdi:arrow-expand-horizontal"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: "config"
+    turn_on_action:
+      - lambda: id(tracker).set_scroll_headsigns(true);
+    turn_off_action:
+      - lambda: id(tracker).set_scroll_headsigns(false);
+  - platform: template
+    id: alerts_enabled_config
+    name: "Alertes trafic"
+    icon: "mdi:alert-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: "config"
+    turn_on_action:
+      - lambda: id(tracker).set_alerts_enabled(true);
+    turn_off_action:
+      - lambda: id(tracker).set_alerts_enabled(false);
+  - platform: template
+    id: clock_enabled_config
+    name: "Écran date et heure"
+    icon: "mdi:clock-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: "config"
+    turn_on_action:
+      - lambda: id(tracker).set_clock_enabled(true);
+    turn_off_action:
+      - lambda: id(tracker).set_clock_enabled(false);
+  - platform: template
+    id: auto_update_config
+    name: "Auto-Update"
+    icon: "mdi:update"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: "config"
+
+button:
+  - platform: restart
+    name: "Restart"
+  - platform: template
+    id: reload_tracker
+    on_press:
+      - lambda: |-
+          id(tracker).reconnect("manual reconnect");
+  - platform: template
+    id: refresh_alerts
+    name: "Rafraîchir les alertes"
+    icon: "mdi:refresh"
+    on_press:
+      - lambda: |-
+          id(tracker).refresh_alerts();
+          id(tracker).show_alerts_now();
+  - platform: template
+    id: write_preferences
+    on_press:
+      - lambda: |-
+          global_preferences->sync();
+
+text:
+  - &config_text_common
+    platform: template
+    id: base_url_config
+    mode: text
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        lambda: |
+          id(tracker).set_base_url(id(base_url_config)->state);
+  - <<: *config_text_common
+    id: feed_code_config
+    on_value:
+      then:
+        lambda: |
+          id(tracker).set_feed_code(id(feed_code_config)->state);
+  - <<: *config_text_common
+    id: schedule_config
+    on_value:
+      then:
+        lambda: |
+          id(tracker).set_schedule_string(id(schedule_config)->state);
+  - <<: *config_text_common
+    id: header_text_config
+    on_value:
+      then:
+        lambda: |
+          id(tracker).set_header_text(id(header_text_config)->state);
+  - <<: *config_text_common
+    id: abbreviations_config
+    on_value:
+      then:
+        lambda: |
+          id(tracker).set_abbreviations_from_text(id(abbreviations_config)->state);
+  - <<: *config_text_common
+    id: route_styles_config
+    on_value:
+      then:
+        lambda: |
+          id(tracker).set_route_styles_from_text(id(route_styles_config)->state);
+  - <<: *config_text_common
+    id: alerts_url_config
+    name: "URL des alertes"
+    icon: "mdi:web"
+    entity_category: "config"
+    initial_value: "https://api.mobilille.fr/v1/alerts/"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).set_alerts_url(id(alerts_url_config)->state);
+  - <<: *config_text_common
+    id: now_str_config
+    initial_value: "Now"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).get_localization()->set_now_string(id(now_str_config)->state);
+  - <<: *config_text_common
+    id: min_long_str_config
+    initial_value: "min"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).get_localization()->set_minutes_long_string(id(min_long_str_config)->state);
+  - <<: *config_text_common
+    id: min_short_str_config
+    initial_value: "m"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).get_localization()->set_minutes_short_string(id(min_short_str_config)->state);
+  - <<: *config_text_common
+    id: hours_short_str_config
+    initial_value: "h"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).get_localization()->set_hours_short_string(id(hours_short_str_config)->state);
+
+select:
+  - platform: template
+    id: time_display_config
+    optimistic: true
+    restore_value: true
+    options:
+      - "departure"
+      - "arrival"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).set_display_departure_times(id(time_display_config)->current_option() == "departure");
+  - platform: template
+    id: time_units_config
+    optimistic: true
+    restore_value: true
+    options:
+      - "long"
+      - "short"
+      - "none"
+    on_value:
+      then:
+        lambda: |-
+          transit_tracker::UnitDisplay unit_display;
+          if (id(time_units_config)->current_option() == "long") {
+            unit_display = transit_tracker::UnitDisplay::UNIT_DISPLAY_LONG;
+          } else if (id(time_units_config)->current_option() == "short") {
+            unit_display = transit_tracker::UnitDisplay::UNIT_DISPLAY_SHORT;
+          } else {
+            unit_display = transit_tracker::UnitDisplay::UNIT_DISPLAY_NONE;
+          }
+
+          id(tracker).set_unit_display(unit_display);
+  - platform: template
+    id: list_mode_config
+    optimistic: true
+    restore_value: true
+    options:
+      - "sequential"
+      - "nextPerRoute"
+    on_value:
+      then:
+        lambda: |-
+          id(tracker).set_list_mode(id(list_mode_config)->current_option());
+  - platform: template
+    id: clock_animation_config
+    name: "Animation date et heure"
+    icon: "mdi:animation-outline"
+    entity_category: "config"
+    optimistic: true
+    restore_value: true
+    initial_option: "Glissement"
+    options:
+      - "Glissement"
+      - "Fondu"
+      - "Aucune"
+    on_value:
+      then:
+        - lambda: |-
+            if (x == "Glissement") {
+              id(tracker).set_clock_animation(transit_tracker::CLOCK_ANIMATION_SLIDE);
+            } else if (x == "Fondu") {
+              id(tracker).set_clock_animation(transit_tracker::CLOCK_ANIMATION_FADE);
+            } else {
+              id(tracker).set_clock_animation(transit_tracker::CLOCK_ANIMATION_NONE);
+            }
+  - platform: template
+    id: orientation_config
+    name: "Display Orientation"
+    icon: "mdi:swap-vertical"
+    entity_category: "config"
+    optimistic: true
+    restore_value: true
+    options:
+      - "Auto-Detect"
+      - "0 degrees"
+      - "180 degrees"
+    on_value:
+      then:
+        - script.execute: update_orientation
+
+number:
+  - platform: template
+    id: clock_duration_config
+    name: "Durée écran date et heure"
+    icon: "mdi:timer-outline"
+    entity_category: "config"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 1
+    max_value: 60
+    step: 1
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        - lambda: id(tracker).set_clock_duration(x * 1000);
+
+output:
+  - platform: template
+    id: display_brightness_output
+    type: float
+    min_power: 0.004 # 1/255
+    zero_means_zero: true
+    write_action:
+      - hub75.set_brightness:
+          id: matrix
+          brightness: !lambda return state * 255.0;
+
+light:
+  - platform: monochromatic
+    name: Display Brightness
+    id: display_brightness
+    output: display_brightness_output
+    restore_mode: RESTORE_DEFAULT_ON
+
+status_led:
+  pin:
+    number: GPIO13
+
+script:
+  - id: dim_display
+    parameters:
+      up: bool
+    then:
+      - light.dim_relative:
+          id: display_brightness
+          relative_brightness: !lambda "return up ? 0.2 : -0.2;"
+          transition_length: 0.1s
+  - id: update_firmware
+    then:
+      - if:
+          condition:
+            or:
+              - lambda: return strcmp(ESPHOME_PROJECT_VERSION, "dev") == 0;
+              - switch.is_off: auto_update_config
+          then:
+            - logger.log: "New firmware available, but auto-update is disabled or this is a dev build; skipping."
+          else:
+            - logger.log: "New firmware available; starting update."
+            - update.perform:
+  - id: update_orientation
+    then:
+      - if:
+          condition:
+            select.is:
+              id: orientation_config
+              options: ["Auto-Detect"]
+          then:
+            - if:
+                condition:
+                  text_sensor.state:
+                    id: orientation_sensor
+                    state: "Portrait Upside Down"
+                then:
+                  - switch.turn_on: flip_display_config
+            - if:
+                condition:
+                  text_sensor.state:
+                    id: orientation_sensor
+                    state: "Portrait Upright"
+                then:
+                  - switch.turn_off: flip_display_config
+          else:
+            - if:
+                condition:
+                  select.is:
+                    id: orientation_config
+                    options: ["180 degrees"]
+                then:
+                  - switch.turn_on: flip_display_config
+            - if:
+                condition:
+                  select.is:
+                    id: orientation_config
+                    options: ["0 degrees"]
+                then:
+                  - switch.turn_off: flip_display_config
+
+binary_sensor:
+  - platform: template
+    id: both_buttons
+    lambda: |-
+      return id(up_button).state && id(down_button).state;
+    on_press:
+      then:
+        - if:
+            condition:
+              display.is_displaying_page: ip_address_page
+            then:
+              - display.page.show: transit_schedule
+            else:
+              - display.page.show: ip_address_page
+  - platform: gpio
+    id: up_button
+    pin: &button_pin_cfg
+      number: GPIO6
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters: &button_filters
+      - autorepeat:
+        - delay: 500ms
+          time_off: 300ms
+          time_on: 100ms
+    on_press:
+      then:
+        - script.execute:
+            id: dim_display
+            up: !lambda "return !id(flip_display_config).state;"
+  - platform: gpio
+    id: down_button
+    pin:
+      <<: *button_pin_cfg
+      number: GPIO7
+    filters: *button_filters
+    on_press:
+      then:
+        - script.execute:
+            id: dim_display
+            up: !lambda "return id(flip_display_config).state;"
+
+i2c:
+  sda: GPIO16
+  scl: GPIO17
+
+lis3dh:
+  range: 2G
+  data_rate: 1HZ
+  resolution: HIGH_RES
+  address: 0x19
+  update_interval: 1s
+
+debug:
+
+text_sensor:
+  - platform: debug
+    device:
+      name: "Device Info"
+    reset_reason:
+      name: "Reset Reason"
+  - platform: project_version
+    id: project_version_text
+  - platform: lis3dh
+    orientation_xy:
+      id: orientation_sensor
+      on_value:
+        then:
+          - script.execute: update_orientation
+
+sensor:
+  - platform: template
+    name: "Alertes actives"
+    icon: "mdi:alert"
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: return id(tracker).get_alert_count();
+  - platform: uptime
+    type: timestamp
+    name: Uptime
+    entity_category: "diagnostic"
+  - platform: wifi_signal
+    name: "Wi-Fi Signal"
+    update_interval: 60s
+    entity_category: "diagnostic"
+  - platform: template
+    id: last_ota_error
+    name: "Last OTA Error"
+    accuracy_decimals: 0
+    entity_category: "diagnostic"
+    update_interval: never
+
+display:
+  - platform: hub75
+    id: matrix
+    board: adafruit-matrix-portal-s3
+    double_buffer: true
+    update_interval: 32ms
+    clock_speed: 16MHz
+    panel_width: 64
+    panel_height: 32
+    layout_cols: 2
+    # We swap the G and B channels in firmware because the 64x32 panel hardware has them reversed
+    g1_pin: 40
+    b1_pin: 41
+    g2_pin: 37
+    b2_pin: 39
+    e_pin: 21
+    brightness: 255
+    pages:
+      - id: transit_schedule
+        lambda: |-
+          id(tracker).draw_schedule();
+      - id: ip_address_page
+        lambda: |-
+          int x = it.get_width() / 2;
+          int y = it.get_height() / 2;
+
+          auto ip_addresses = ::esphome::network::get_ip_addresses();
+          if (ip_addresses.empty()) {
+            it.printf(x, y, id(pixolletta), COLOR_ON, TextAlign::CENTER, "Pas d'adresse IP");
+            return;
+          }
+
+          char ip_address[esphome::network::IP_ADDRESS_BUFFER_SIZE];
+          ip_addresses[0].str_to(ip_address);
+          it.printf(x, y, id(pixolletta), COLOR_ON, TextAlign::CENTER, "%s", ip_address);
+      - id: ota_progress_page
+        lambda: |-
+          int x = it.get_width() / 2;
+          int y = it.get_height() / 2;
+
+          int y1 = y - 5;
+          int y2 = y + 6;
+
+          it.printf(x, y1, id(pixolletta), Color(0x252627), TextAlign::CENTER, "Mise à jour...");
+          it.printf(x, y2, id(pixolletta), Color(0x252627), TextAlign::CENTER, "%.0f%% terminé", id(ota_progress));
+
+font:
+  - file: ${pixolletta_file_path}
+    id: pixolletta
+    size: 10
+    glyphs:
+      - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;!?()"'-+/*=%@#[]{}<>|&^~
+      - ÄËÏÖÜÉÈÔäëïöüéèôŊŋÁÊÎÛÝáêîûýĜĝÀÌÒàìòÑñÍÓÚíóúÇçĆČĐŠŽćčđšžÙùÕõŞŁŇŘşłňřÅåØøĀĒĪŌŪāēīōūÂâĞğıĎĚŤŮďěťůÆæĲĳŒœÐðŸÿßŐŰőűÞþÃãĂĔĬŎŬăĕĭŏŭĨŨĩũĄĘŃŚŻąęńśżĖėĢĶĻŅģķļņĮŲįųŔŹŕźĊĠċġħŜŝŢţŦŧŴŵŶŷĹĽĺľİ
+      - " "
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Paris
+
+web_server:
+  version: 3
+
+transit_tracker:
+  id: tracker
+  alerts:
+    # Remplacée au démarrage par l'entité texte « URL des alertes » (modifiable depuis l'interface web)
+    url: "https://api.mobilille.fr/v1/alerts/"
+    update_interval: 60s
+    keys:
+      severity: state        # "info" -> bleu, "perturbation" -> rouge (sévère)
+      important: important   # true -> rouge
+      message: message       # ou "details" pour le texte long
+    schedule_duration: 20s   # horaires affichés 20 s entre deux passages d'alertes
+    alert_duration: 8s       # durée minimale par alerte (prolongée si le texte fait plusieurs pages)
+    page_duration: 4s        # durée d'une page de 2 lignes
+    header_style: filled     # filled (bandeau plein) ou text (titre coloré + filet)
+    header: severity            # bandeau = gravité ; texte = titre + message (ou "title")
+    info_title: "Information"   # state: info
+    warning_title: "Perturbation"   # autres états inconnus (orange)
+    severe_title: "Perturbation"    # state: perturbation ou important: true (bandeau rouge)
+  # Écran date + heure, centré, affiché régulièrement à la place des horaires
+  # (activable depuis le tableau de bord : « Écran date et heure »)
+  clock:
+    interval: 60s   # temps entre deux affichages
+    duration: 5s    # durée d'affichage (remplacée par « Durée écran date et heure » du tableau de bord)
+  # Courses annulées / arrêts non desservis (GTFS-RT). Nécessite l'API modifiée.
+  cancelled:
+    rail_text: "Interrompu"     # métro, tram, train
+    bus_text: "Non desservi"    # bus
+    alternate_interval: 2s      # croix <-> libellé, en quinconce d'une ligne à l'autre
+    unknown_route_type: bus     # si l'API ne connaît pas le type de ligne
+    # rail_routes: [ "ID_ROUTE_M1", "ID_ROUTE_M2" ]   # forcer « Interrompu » pour ces lignes
+
+serial_rpc:
