@@ -109,14 +109,19 @@ void HOT TransitTracker::draw_vlille_(const VlilleStation &station, uint32_t ela
     const char *plural;
   };
   const CountLine lines[2] = {{station.bikes, "vélo", "vélos"}, {station.docks, "place", "places"}};
+  const unsigned long uptime = millis();
   for (const auto &line : lines) {
+    // Real-time icon (6x6) before the number, placed like on the departures screen
+    this->draw_realtime_icon_(text_x + 5, y + line_height - 6, uptime);
+    const int number_x = text_x + 8;
+
     char number[8];
     snprintf(number, sizeof(number), "%d", line.count);
     int number_width;
     this->font_->measure(number, &number_width, &x_offset, &baseline, &text_height);
-    this->display_->print(text_x, y, this->font_, line.count > 0 ? VLILLE_AVAILABLE_COLOR : VLILLE_EMPTY_COLOR,
+    this->display_->print(number_x, y, this->font_, line.count > 0 ? VLILLE_AVAILABLE_COLOR : VLILLE_EMPTY_COLOR,
                           display::TextAlign::TOP_LEFT, number);
-    this->display_->print(text_x + number_width + 3, y, this->font_, VLILLE_TEXT_COLOR, display::TextAlign::TOP_LEFT,
+    this->display_->print(number_x + number_width + 3, y, this->font_, VLILLE_TEXT_COLOR, display::TextAlign::TOP_LEFT,
                           line.count > 1 ? line.plural : line.singular);
     y += line_height;
   }

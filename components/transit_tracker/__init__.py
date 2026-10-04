@@ -4,6 +4,7 @@ from esphome.components.display import Display, DisplayRef
 from esphome.components.font import Font
 from esphome.components.time import RealTimeClock
 from esphome.components import color
+from esphome.components import select, switch, text
 from esphome.const import (
     CONF_ID,
     CONF_DISPLAY_ID,
@@ -28,6 +29,7 @@ AUTO_LOAD = ["json"]
 
 transit_tracker_ns = cg.esphome_ns.namespace("transit_tracker")
 TransitTracker = transit_tracker_ns.class_("TransitTracker", cg.Component)
+ConfigEditor = transit_tracker_ns.class_("ConfigEditor", cg.Component)
 
 UnitDisplay = transit_tracker_ns.enum("UnitDisplay")
 Alert = transit_tracker_ns.struct("Alert")
@@ -99,6 +101,11 @@ CONF_ANIMATION = "animation"
 CONF_VLILLE = "vlille"
 CONF_STATIONS = "stations"
 CONF_LOGO_COLOR = "logo_color"
+CONF_CONFIG_EDITOR = "config_editor"
+CONF_PATH = "path"
+CONF_TEXTS = "texts"
+CONF_SELECTS = "selects"
+CONF_SWITCHES = "switches"
 ALERT_KEY_NAMES = [
     "list", "id", "title", "message", "severity", "route", "color", "active", "start", "end", "important",
 ]
@@ -265,6 +272,36 @@ VLILLE_SCHEMA = cv.Schema(
 )
 
 
+def validate_editor_key(value):
+    value = cv.string_strict(value)
+    if not value or not all(c.isalnum() or c == "_" for c in value):
+        raise cv.Invalid("Keys may only contain letters, digits and underscores")
+    return value
+
+
+# Live editor for the configurator settings, served by web_server (see web/config-editor.js)
+CONFIG_EDITOR_SCHEMA = cv.All(
+    cv.requires_component("web_server_base"),
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(ConfigEditor),
+            cv.Optional(CONF_PATH, default="/transit-tracker/config"): cv.All(
+                cv.string_strict, cv.Length(min=2)
+            ),
+            cv.Optional(CONF_TEXTS, default={}): cv.Schema(
+                {validate_editor_key: cv.use_id(text.Text)}
+            ),
+            cv.Optional(CONF_SELECTS, default={}): cv.Schema(
+                {validate_editor_key: cv.use_id(select.Select)}
+            ),
+            cv.Optional(CONF_SWITCHES, default={}): cv.Schema(
+                {validate_editor_key: cv.use_id(switch.Switch)}
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+)
+
+
 CONFIG_SCHEMA = cv.All(
     validate_esphome_version,
     cv.only_on_esp32,
@@ -326,6 +363,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CANCELLED, default={}): CANCELLED_SCHEMA,
             cv.Optional(CONF_CLOCK): CLOCK_SCHEMA,
             cv.Optional(CONF_VLILLE): VLILLE_SCHEMA,
+            cv.Optional(CONF_CONFIG_EDITOR): CONFIG_EDITOR_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _consume_transit_tracker_sockets,
@@ -413,6 +451,9 @@ async def to_code(config):
 
     await cg.register_component(var, config)
 
+    if CONF_CONFIG_EDITOR in config:
+        await _config_editor_to_code(var, config[CONF_CONFIG_EDITOR])
+
     add_idf_component(
         name="espressif/esp_websocket_client",
         ref="1.7.0",
@@ -477,6 +518,20 @@ async def _alerts_to_code(var, conf):
     if not conf[CONF_URL]:
         # Enable the feature so the URL can be provided later at runtime
         cg.add(var.set_alerts_configured())
+
+
+async def _config_editor_to_code(tracker, conf):
+    cg.add_define("USE_TRANSIT_TRACKER_CONFIG_EDITOR")
+    var = cg.new_Pvariable(conf[CONF_ID])
+    await cg.register_component(var, conf)
+    cg.add(var.set_tracker(tracker))
+    cg.add(var.set_path(conf[CONF_PATH]))
+    for key, entity_id in conf[CONF_TEXTS].items():
+        cg.add(var.add_text(key, await cg.get_variable(entity_id)))
+    for key, entity_id in conf[CONF_SELECTS].items():
+        cg.add(var.add_select(key, await cg.get_variable(entity_id)))
+    for key, entity_id in conf[CONF_SWITCHES].items():
+        cg.add(var.add_switch(key, await cg.get_variable(entity_id)))
 
 
 async def _vlille_to_code(var, conf):

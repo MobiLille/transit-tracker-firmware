@@ -203,8 +203,12 @@ text:
       then:
         lambda: |
           id(tracker).set_feed_code(id(feed_code_config)->state);
-  - <<: *config_text_common
+  # Textes longs (jusqu'à 1024 octets) : même rôle que platform: template + restore_value,
+  # sans la limite de 255 octets. Les valeurs déjà enregistrées sont reprises au premier démarrage.
+  - platform: transit_tracker
     id: schedule_config
+    mode: text
+    max_length: 1024
     on_value:
       then:
         lambda: |
@@ -215,14 +219,18 @@ text:
       then:
         lambda: |
           id(tracker).set_header_text(id(header_text_config)->state);
-  - <<: *config_text_common
+  - platform: transit_tracker
     id: abbreviations_config
+    mode: text
+    max_length: 1024
     on_value:
       then:
         lambda: |
           id(tracker).set_abbreviations_from_text(id(abbreviations_config)->state);
-  - <<: *config_text_common
+  - platform: transit_tracker
     id: route_styles_config
+    mode: text
+    max_length: 1024
     on_value:
       then:
         lambda: |
@@ -637,6 +645,8 @@ time:
 
 web_server:
   version: 3
+  # Bouton « Configuration YAML » : édition en direct de la configuration du configurateur
+  js_include: web/config-editor.js
 
 transit_tracker:
   id: tracker
@@ -675,5 +685,26 @@ transit_tracker:
     alternate_interval: 2s      # croix <-> libellé, en quinconce d'une ligne à l'autre
     unknown_route_type: bus     # si l'API ne connaît pas le type de ligne
     # rail_routes: [ "ID_ROUTE_M1", "ID_ROUTE_M2" ]   # forcer « Interrompu » pour ces lignes
+
+  # Configuration du configurateur, modifiable en YAML depuis le tableau de bord web.
+  # Chaque sauvegarde enregistre en flash et recharge le tracker.
+  config_editor:
+    texts:
+      base_url: base_url_config
+      feed_code: feed_code_config
+      schedule: schedule_config
+      header_text: header_text_config
+      abbreviations: abbreviations_config
+      route_styles: route_styles_config
+      now_str: now_str_config
+      min_long_str: min_long_str_config
+      min_short_str: min_short_str_config
+      hours_short_str: hours_short_str_config
+    selects:
+      time_display: time_display_config
+      time_units: time_units_config
+      list_mode: list_mode_config
+    switches:
+      scroll_headsigns: scroll_headsigns_config
 
 serial_rpc:

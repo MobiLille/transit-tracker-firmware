@@ -195,6 +195,7 @@ class TransitTracker : public Component {
     WebSocketClient ws_client_;
 
     void handle_message_(const std::string &payload);
+    std::string apply_abbreviations_(const std::string &headsign) const;
     void send_subscribe_();
     void on_disconnect_();
 

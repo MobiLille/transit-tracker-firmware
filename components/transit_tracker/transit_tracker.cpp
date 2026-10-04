@@ -282,14 +282,7 @@ void TransitTracker::handle_message_(const std::string &payload) {
     new_trips.reserve(trip_array.size());
 
     for (auto trip : trip_array) {
-      std::string headsign = trip["headsign"].as<std::string>();
-      for (const auto &abbr : this->abbreviations_) {
-        size_t pos = headsign.find(abbr.first);
-        if (pos != std::string::npos) {
-          ESP_LOGV(TAG, "Applying abbreviation '%s' -> '%s'", abbr.first.c_str(), abbr.second.c_str());
-          headsign.replace(pos, abbr.first.length(), abbr.second);
-        }
-      }
+      std::string headsign = this->apply_abbreviations_(trip["headsign"].as<std::string>());
 
       auto route_id = trip["routeId"].as<std::string>();
       auto route_style = this->route_styles_.find(route_id);
@@ -337,6 +330,39 @@ void TransitTracker::handle_message_(const std::string &payload) {
              static_cast<unsigned>(payload.size()), payload.c_str());
     this->status_set_error(LOG_STR("Failed to parse schedule data"));
   }
+}
+
+// Single left-to-right pass: at each position the longest matching abbreviation wins, so that
+// "Foo Bar Baz" is not partially replaced by a shorter "Foo Bar" rule. Replaced text is not rescanned.
+std::string TransitTracker::apply_abbreviations_(const std::string &headsign) const {
+  if (this->abbreviations_.empty()) {
+    return headsign;
+  }
+
+  std::string result;
+  result.reserve(headsign.size());
+  size_t i = 0;
+  while (i < headsign.size()) {
+    const std::pair<const std::string, std::string> *best = nullptr;
+    for (const auto &abbr : this->abbreviations_) {
+      const std::string &from = abbr.first;
+      if (from.empty() || (best != nullptr && from.size() <= best->first.size())) {
+        continue;
+      }
+      if (headsign.compare(i, from.size(), from) == 0) {
+        best = &abbr;
+      }
+    }
+
+    if (best != nullptr) {
+      ESP_LOGV(TAG, "Applying abbreviation '%s' -> '%s'", best->first.c_str(), best->second.c_str());
+      result += best->second;
+      i += best->first.size();
+    } else {
+      result += headsign[i++];
+    }
+  }
+  return result;
 }
 
 void TransitTracker::set_abbreviations_from_text(const std::string &text) {
