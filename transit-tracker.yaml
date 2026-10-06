@@ -22,6 +22,11 @@ esp32:
   cpu_frequency: 240MHz
   framework:
     type: esp-idf
+    sdkconfig_options:
+      # Les connexions TLS (websocket, alertes, V'Lille, mises à jour) allouent ~20 Ko chacune ;
+      # en RAM interne elles échouaient au démarrage (MBEDTLS_ERR_SSL_ALLOC_FAILED, -0x7F00).
+      # On les place dans la PSRAM.
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
 
 psram:
   mode: quad
@@ -64,6 +69,8 @@ api:
 
 http_request:
   verify_ssl: true
+  # 4,5 s par défaut : trop court pour la connexion TLS à GitHub Pages avec un Wi-Fi faible
+  timeout: 15s
   watchdog_timeout: 120s
 
 ota:
@@ -100,6 +107,18 @@ update:
     on_update_available:
       then:
         - script.execute: update_firmware
+
+interval:
+  # Après le démarrage, le manifest n'est lu qu'une fois puis toutes les 6 h : un échec
+  # (Wi-Fi ou DNS pas encore prêt) laissait la version « UNKNOWN ». On réessaie toutes
+  # les 2 minutes tant qu'aucune lecture n'a réussi.
+  - interval: 2min
+    then:
+      - if:
+          condition:
+            lambda: return id(update_http_request).state == update::UPDATE_STATE_UNKNOWN;
+          then:
+            - component.update: update_http_request
 
 switch:
   - platform: template
@@ -650,6 +669,10 @@ web_server:
 
 transit_tracker:
   id: tracker
+  # Fin de l'écran de chargement : réseau, heure et horaires prêts. On vérifie alors
+  # les mises à jour (la vérification faite à la connexion Wi-Fi échoue souvent, DNS pas prêt).
+  on_loaded:
+    - component.update: update_http_request
   alerts:
     # Remplacée au démarrage par l'entité texte « URL des alertes » (modifiable depuis l'interface web)
     url: "https://api.mobilille.fr/v1/alerts/"

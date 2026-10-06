@@ -26,6 +26,9 @@ namespace transit_tracker {
 
 static const char *const TAG = "transit_tracker.vlille";
 
+static constexpr uint32_t STARTUP_POLL_MS = 250;
+static constexpr uint32_t STARTUP_MAX_WAIT_MS = 90000;
+
 // A station object is ~250 bytes; anything much larger isn't one.
 static constexpr size_t MAX_OBJECT_SIZE = 2048;
 
@@ -312,8 +315,14 @@ static std::string with_query(const std::string &url, const std::string &query) 
 }
 
 void VlilleFetcher::task_loop_() {
-  // Let Wi-Fi and the main websocket settle first
-  vTaskDelay(pdMS_TO_TICKS(3000));
+  // Wait for the main websocket to connect (or give up waiting after a while if the server is down),
+  // so that this request doesn't compete with it at boot
+  for (uint32_t waited = 0; !this->network_ready_ && !this->stop_requested_ && waited < STARTUP_MAX_WAIT_MS;
+       waited += STARTUP_POLL_MS) {
+    vTaskDelay(pdMS_TO_TICKS(STARTUP_POLL_MS));
+  }
+  // Staggered after the alerts so the two TLS handshakes don't overlap
+  vTaskDelay(pdMS_TO_TICKS(2000));
 
   while (!this->stop_requested_) {
     std::string url;

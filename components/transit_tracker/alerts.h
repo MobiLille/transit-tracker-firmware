@@ -90,6 +90,9 @@ class AlertFetcher {
   AlertFieldKeys &keys() { return this->keys_; }
 
   void start();
+  /// Lets the first request go: called once the main websocket is connected (DNS and Internet work),
+  /// so that the TLS handshakes don't all happen at once at boot
+  void set_network_ready() { this->network_ready_ = true; }
   void stop();
   /// Wakes the background task to fetch immediately.
   void refresh();
@@ -121,6 +124,7 @@ class AlertFetcher {
 
   void *task_handle_{nullptr};
   std::atomic<bool> stop_requested_{false};
+  std::atomic<bool> network_ready_{false};
   std::atomic<uint32_t> generation_{0};
   std::atomic<size_t> count_{0};
   std::atomic<bool> last_fetch_ok_{false};

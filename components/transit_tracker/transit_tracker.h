@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/components/display/display.h"
 #include "esphome/components/font/font.h"
@@ -54,6 +55,9 @@ class TransitTracker : public Component {
     void close(bool fully = false);
 
     void draw_schedule();
+
+    /// Fired once at boot, when the loading screen gives way to the schedule
+    Trigger<> *get_loaded_trigger() { return &this->loaded_trigger_; }
 
     Localization* get_localization() { return &this->localization_; }
 
@@ -204,6 +208,14 @@ class TransitTracker : public Component {
     std::atomic<bool> has_ever_connected_{false};
     std::atomic<bool> pending_subscribe_{false};
     std::atomic<bool> fully_closed_{false};
+    /// Set once the first schedule has been received; until then the loading screen is shown
+    std::atomic<bool> schedule_loaded_{false};
+
+    void draw_loading_();
+    unsigned long loading_start_ = 0;
+    float loading_bar_shown_ = 0;
+    bool loading_done_ = false;
+    Trigger<> loaded_trigger_;
 
     std::string base_url_;
     std::vector<std::pair<std::string, std::string>> extra_headers_;

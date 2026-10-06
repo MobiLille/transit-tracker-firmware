@@ -60,6 +60,9 @@ void TransitTracker::setup() {
     this->has_ever_connected_ = true;
     this->consecutive_disconnects_ = 0;
     this->pending_subscribe_ = true;
+    // The server is reachable, so DNS and Internet work: the other fetchers may start
+    this->alert_fetcher_.set_network_ready();
+    this->vlille_fetcher_.set_network_ready();
   });
 
   this->ws_client_.set_on_disconnected([this]() {
@@ -115,6 +118,9 @@ void TransitTracker::setup() {
 
   if (this->base_url_.empty()) {
     ESP_LOGW(TAG, "No base URL set; websocket will not start");
+    // Nothing to wait for
+    this->alert_fetcher_.set_network_ready();
+    this->vlille_fetcher_.set_network_ready();
   } else {
     this->ws_client_.set_uri(this->base_url_);
     this->ws_client_.start();
@@ -212,6 +218,13 @@ void TransitTracker::on_shutdown() {
 
 void TransitTracker::on_disconnect_() {
   if (this->fully_closed_) {
+    return;
+  }
+
+  // Failures while the network is down are expected (e.g. Wi-Fi still connecting at boot);
+  // only count the ones that can point to a server problem
+  if (!esphome::network::is_connected()) {
+    ESP_LOGD(TAG, "Websocket disconnected while the network is down; not counted");
     return;
   }
 
@@ -321,6 +334,7 @@ void TransitTracker::handle_message_(const std::string &payload) {
       std::lock_guard<std::mutex> lock(this->schedule_state_.mutex);
       this->schedule_state_.trips = std::move(new_trips);
     }
+    this->schedule_loaded_ = true;
 
     return true;
   });
@@ -614,6 +628,23 @@ void HOT TransitTracker::draw_schedule() {
   if (this->display_ == nullptr) [[unlikely]] {
     ESP_LOGW(TAG, "No display attached, cannot draw schedule");
     return;
+  }
+
+  // Boot: loading screen until the network, the time and the first schedule are all ready
+  // (the schedule can arrive before SNTP sync). Nothing to load without a URL.
+  if (!this->loading_done_) {
+    bool ready = this->schedule_loaded_.load() && esphome::network::is_connected() && this->rtc_->now().is_valid();
+    if (!ready && !this->base_url_.empty()) {
+      this->draw_loading_();
+      return;
+    }
+    // Boot complete: the other screens start their rotation now, schedule first
+    this->loading_done_ = true;
+    const unsigned long now = millis();
+    this->alerts_rotation_start_ = now;
+    this->clock_rotation_start_ = now;
+    this->vlille_rotation_start_ = now - this->vlille_interval_ms_ / 2;
+    this->loaded_trigger_.trigger();
   }
 
   if (!esphome::network::is_connected()) {

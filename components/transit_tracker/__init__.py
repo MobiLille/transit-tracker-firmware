@@ -1,3 +1,4 @@
+from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components.display import Display, DisplayRef
@@ -101,6 +102,7 @@ CONF_ANIMATION = "animation"
 CONF_VLILLE = "vlille"
 CONF_STATIONS = "stations"
 CONF_LOGO_COLOR = "logo_color"
+CONF_ON_LOADED = "on_loaded"
 CONF_CONFIG_EDITOR = "config_editor"
 CONF_PATH = "path"
 CONF_TEXTS = "texts"
@@ -364,6 +366,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CLOCK): CLOCK_SCHEMA,
             cv.Optional(CONF_VLILLE): VLILLE_SCHEMA,
             cv.Optional(CONF_CONFIG_EDITOR): CONFIG_EDITOR_SCHEMA,
+            # Runs once at boot, when the network, the time and the first schedule are ready
+            cv.Optional(CONF_ON_LOADED): automation.validate_automation(single=True),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _consume_transit_tracker_sockets,
@@ -453,6 +457,9 @@ async def to_code(config):
 
     if CONF_CONFIG_EDITOR in config:
         await _config_editor_to_code(var, config[CONF_CONFIG_EDITOR])
+
+    if CONF_ON_LOADED in config:
+        await automation.build_automation(var.get_loaded_trigger(), [], config[CONF_ON_LOADED])
 
     add_idf_component(
         name="espressif/esp_websocket_client",
