@@ -523,6 +523,39 @@ number:
       then:
         - lambda: id(tracker).set_vlille_duration(x * 1000);
 
+  - platform: template
+    id: schedule_pages_config
+    name: "Pages de départs"
+    icon: "mdi:book-open-page-variant-outline"
+    entity_category: "config"
+    mode: box
+    min_value: 1
+    max_value: 5
+    step: 1
+    initial_value: 2
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        - lambda: id(tracker).set_pages((int) x);
+
+  - platform: template
+    id: schedule_page_duration_config
+    name: "Durée page de départs"
+    icon: "mdi:timer-outline"
+    entity_category: "config"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 2
+    max_value: 60
+    step: 1
+    initial_value: 8
+    optimistic: true
+    restore_value: true
+    on_value:
+      then:
+        - lambda: id(tracker).set_page_duration(x * 1000);
+
 output:
   - platform: template
     id: display_brightness_output
@@ -809,6 +842,10 @@ web_server:
 
 transit_tracker:
   id: tracker
+  # Prochains départs sur plusieurs pages de 3 lignes, affichées à tour de rôle
+  # (remplacés par « Pages de départs » et « Durée page de départs » du tableau de bord)
+  pages: 2
+  page_duration: 8s
   # Fin de l'écran de chargement : réseau, heure et horaires prêts. On vérifie alors
   # les mises à jour (la vérification faite à la connexion Wi-Fi échoue souvent, DNS pas prêt).
   on_loaded:

@@ -173,6 +173,7 @@ void TransitTracker::dump_config() {
   ESP_LOGCONFIG(TAG, "  Base URL: %s", this->base_url_.c_str());
   ESP_LOGCONFIG(TAG, "  Schedule: %s", this->schedule_string_.c_str());
   ESP_LOGCONFIG(TAG, "  Limit: %d", this->limit_);
+  ESP_LOGCONFIG(TAG, "  Pages: %d (%us each)", this->pages_, (unsigned) (this->page_duration_ms_ / 1000));
   ESP_LOGCONFIG(TAG, "  List mode: %s", this->list_mode_.c_str());
   ESP_LOGCONFIG(TAG, "  Display departure times: %s", this->display_departure_times_ ? "true" : "false");
   ESP_LOGCONFIG(TAG, "  Scroll Headsigns: %s", this->scroll_headsigns_ ? "true" : "false");
@@ -182,6 +183,18 @@ void TransitTracker::dump_config() {
                   (unsigned) (this->alerts_schedule_duration_ms_ / 1000),
                   (unsigned) (this->alerts_alert_duration_ms_ / 1000),
                   (unsigned) (this->alerts_page_duration_ms_ / 1000));
+  }
+}
+
+void TransitTracker::set_pages(int pages) {
+  pages = std::max(1, pages);
+  if (pages == this->pages_) {
+    return;
+  }
+  this->pages_ = pages;
+  // The server sends limit * pages trips: subscribe again with the new count
+  if (this->has_ever_connected_.load()) {
+    this->reconnect("page count changed");
   }
 }
 
@@ -253,7 +266,7 @@ void TransitTracker::send_subscribe_() {
       data["feedCode"] = this->feed_code_;
     }
     data["routeStopPairs"] = this->schedule_string_;
-    data["limit"] = this->limit_;
+    data["limit"] = this->limit_ * this->pages_;
     data["sortByDeparture"] = this->display_departure_times_;
     data["listMode"] = this->list_mode_;
     if (this->show_cancelled_) {
@@ -711,15 +724,33 @@ void HOT TransitTracker::draw_schedule() {
   }
 
   int nominal_font_height = this->font_->get_ascender() + this->font_->get_descender();
-  unsigned long uptime = millis();
   uint rtc_now = this->rtc_->now().timestamp;
+
+  // Pages: back on the schedule after another screen (or at boot) -> restart from the first page
+  const unsigned long now_ms = millis();
+  if (this->schedule_last_draw_ == 0 || now_ms - this->schedule_last_draw_ > 500) {
+    this->schedule_page_start_ = now_ms;
+  }
+  this->schedule_last_draw_ = now_ms;
+
+  const auto &trips = this->schedule_state_.trips;
+  const int rows_per_page = std::max(1, this->limit_);
+  const int page_count =
+      std::min<int>(this->pages_, (static_cast<int>(trips.size()) + rows_per_page - 1) / rows_per_page);
+  const unsigned long elapsed = now_ms - this->schedule_page_start_;
+  const int page = page_count > 1 ? static_cast<int>((elapsed / this->page_duration_ms_) % page_count) : 0;
+  // Each page starts its scrolling/animations from the beginning
+  unsigned long uptime = page_count > 1 ? elapsed % this->page_duration_ms_ : elapsed;
+
+  const size_t first = static_cast<size_t>(page) * rows_per_page;
+  const size_t last = std::min(trips.size(), first + rows_per_page);
 
   int scroll_cycle_duration = 0;
   if (this->scroll_headsigns_) {
     int largest_headsign_overflow = 0;
-    for (const Trip &trip : this->schedule_state_.trips) {
+    for (size_t i = first; i < last; i++) {
       int headsign_overflow;
-      this->draw_trip(trip, 0, nominal_font_height, uptime, rtc_now, true, &headsign_overflow);
+      this->draw_trip(trips[i], 0, nominal_font_height, uptime, rtc_now, true, &headsign_overflow);
       largest_headsign_overflow = std::max(largest_headsign_overflow, headsign_overflow);
     }
 
@@ -739,8 +770,8 @@ void HOT TransitTracker::draw_schedule() {
   }
 
   int row_index = 0;
-  for (const Trip &trip : this->schedule_state_.trips) {
-    this->draw_trip(trip, y_offset, nominal_font_height, uptime, rtc_now, false, nullptr, scroll_cycle_duration,
+  for (size_t i = first; i < last; i++) {
+    this->draw_trip(trips[i], y_offset, nominal_font_height, uptime, rtc_now, false, nullptr, scroll_cycle_duration,
                     row_index++);
     y_offset += nominal_font_height;
   }

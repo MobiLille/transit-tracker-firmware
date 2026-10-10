@@ -71,6 +71,10 @@ class TransitTracker : public Component {
     void set_schedule_string(const std::string &schedule_string) { schedule_string_ = schedule_string; }
     void set_list_mode(const std::string &list_mode) { list_mode_ = list_mode; }
     void set_limit(int limit) { limit_ = limit; }
+    /// Number of departure pages (limit rows each); resubscribes when changed after connecting
+    void set_pages(int pages);
+    /// How long each departure page stays on screen
+    void set_page_duration(uint32_t ms) { page_duration_ms_ = std::max<uint32_t>(ms, 1000); }
     void set_scroll_headsigns(bool scroll_headsigns) { scroll_headsigns_ = scroll_headsigns; }
 
     void set_header_text(const std::string &header_text) { header_text_ = header_text; }
@@ -224,6 +228,11 @@ class TransitTracker : public Component {
     std::string list_mode_;
     bool display_departure_times_ = true;
     int limit_;
+    int pages_ = 1;
+    uint32_t page_duration_ms_ = 8000;
+    /// Start of the current stay on the schedule screen (pages restart from the first one)
+    unsigned long schedule_page_start_ = 0;
+    unsigned long schedule_last_draw_ = 0;
 
     std::string header_text_;
     std::map<std::string, std::string> abbreviations_;
