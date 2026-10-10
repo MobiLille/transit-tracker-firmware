@@ -5,7 +5,7 @@ from esphome.components.display import Display, DisplayRef
 from esphome.components.font import Font
 from esphome.components.time import RealTimeClock
 from esphome.components import color
-from esphome.components import select, switch, text
+from esphome.components import button, select, switch, text, text_sensor, wifi
 from esphome.const import (
     CONF_ID,
     CONF_DISPLAY_ID,
@@ -31,6 +31,7 @@ AUTO_LOAD = ["json"]
 transit_tracker_ns = cg.esphome_ns.namespace("transit_tracker")
 TransitTracker = transit_tracker_ns.class_("TransitTracker", cg.Component)
 ConfigEditor = transit_tracker_ns.class_("ConfigEditor", cg.Component)
+WifiManager = transit_tracker_ns.class_("WifiManager", cg.Component)
 
 UnitDisplay = transit_tracker_ns.enum("UnitDisplay")
 Alert = transit_tracker_ns.struct("Alert")
@@ -103,6 +104,11 @@ CONF_VLILLE = "vlille"
 CONF_STATIONS = "stations"
 CONF_LOGO_COLOR = "logo_color"
 CONF_ON_LOADED = "on_loaded"
+CONF_WIFI_MANAGER = "wifi_manager"
+CONF_SSID_TEXT = "ssid"
+CONF_PASSWORD_TEXT = "password"
+CONF_CONNECT_BUTTON = "connect"
+CONF_STATUS_SENSOR = "status"
 CONF_CONFIG_EDITOR = "config_editor"
 CONF_PATH = "path"
 CONF_TEXTS = "texts"
@@ -304,6 +310,26 @@ CONFIG_EDITOR_SCHEMA = cv.All(
 )
 
 
+# Wi-Fi panel of the web dashboard: scan and connect (see web/config-editor.js)
+WIFI_MANAGER_SCHEMA = cv.All(
+    cv.requires_component("web_server_base"),
+    cv.requires_component("wifi"),
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(WifiManager),
+            cv.Optional(CONF_PATH, default="/transit-tracker/wifi"): cv.All(
+                cv.string_strict, cv.Length(min=2)
+            ),
+            # Entities used for the connection: the button must run wifi.configure with them
+            cv.Required(CONF_SSID_TEXT): cv.use_id(text.Text),
+            cv.Required(CONF_PASSWORD_TEXT): cv.use_id(text.Text),
+            cv.Required(CONF_CONNECT_BUTTON): cv.use_id(button.Button),
+            cv.Optional(CONF_STATUS_SENSOR): cv.use_id(text_sensor.TextSensor),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+)
+
+
 CONFIG_SCHEMA = cv.All(
     validate_esphome_version,
     cv.only_on_esp32,
@@ -366,6 +392,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CLOCK): CLOCK_SCHEMA,
             cv.Optional(CONF_VLILLE): VLILLE_SCHEMA,
             cv.Optional(CONF_CONFIG_EDITOR): CONFIG_EDITOR_SCHEMA,
+            cv.Optional(CONF_WIFI_MANAGER): WIFI_MANAGER_SCHEMA,
             # Runs once at boot, when the network, the time and the first schedule are ready
             cv.Optional(CONF_ON_LOADED): automation.validate_automation(single=True),
         }
@@ -458,6 +485,9 @@ async def to_code(config):
     if CONF_CONFIG_EDITOR in config:
         await _config_editor_to_code(var, config[CONF_CONFIG_EDITOR])
 
+    if CONF_WIFI_MANAGER in config:
+        await _wifi_manager_to_code(config[CONF_WIFI_MANAGER])
+
     if CONF_ON_LOADED in config:
         await automation.build_automation(var.get_loaded_trigger(), [], config[CONF_ON_LOADED])
 
@@ -525,6 +555,21 @@ async def _alerts_to_code(var, conf):
     if not conf[CONF_URL]:
         # Enable the feature so the URL can be provided later at runtime
         cg.add(var.set_alerts_configured())
+
+
+async def _wifi_manager_to_code(conf):
+    cg.add_define("USE_TRANSIT_TRACKER_WIFI_MANAGER")
+    # Full scan results (not only the configured network), delivered to our listener
+    wifi.request_wifi_scan_results()
+    wifi.request_wifi_scan_results_listener()
+    var = cg.new_Pvariable(conf[CONF_ID])
+    await cg.register_component(var, conf)
+    cg.add(var.set_path(conf[CONF_PATH]))
+    cg.add(var.set_ssid_text(await cg.get_variable(conf[CONF_SSID_TEXT])))
+    cg.add(var.set_password_text(await cg.get_variable(conf[CONF_PASSWORD_TEXT])))
+    cg.add(var.set_connect_button(await cg.get_variable(conf[CONF_CONNECT_BUTTON])))
+    if CONF_STATUS_SENSOR in conf:
+        cg.add(var.set_status_sensor(await cg.get_variable(conf[CONF_STATUS_SENSOR])))
 
 
 async def _config_editor_to_code(tracker, conf):

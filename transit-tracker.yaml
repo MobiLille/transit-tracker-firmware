@@ -27,6 +27,16 @@ esp32:
       # en RAM interne elles échouaient au démarrage (MBEDTLS_ERR_SSL_ALLOC_FAILED, -0x7F00).
       # On les place dans la PSRAM.
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
+      # Par défaut, ESPHome réserve la PSRAM aux allocations explicites : tout le reste (chaînes, JSON,
+      # tampons HTTP/websocket, Wi-Fi) s'entasse dans la RAM interne, déjà occupée à ~110 Ko par les
+      # tampons DMA de l'écran. Elle s'épuisait (5 Ko libres) et le pilote Wi-Fi finissait par planter.
+      # On laisse malloc() utiliser la PSRAM pour les blocs de 4 Ko et plus, en gardant 32 Ko de RAM
+      # interne réservés au DMA et au Wi-Fi ; les tampons Wi-Fi/lwIP passent aussi en PSRAM.
+      CONFIG_SPIRAM_USE_CAPS_ALLOC: n
+      CONFIG_SPIRAM_USE_MALLOC: y
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "4096"
+      CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL: "32768"
+      CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: y
 
 psram:
   mode: quad
@@ -186,6 +196,74 @@ switch:
 button:
   - platform: restart
     name: "Restart"
+  # Se connecte au réseau saisi ci-dessus ; en cas d'échec (mauvais mot de passe, réseau hors
+  # de portée), l'afficheur revient tout seul sur l'ancien réseau au bout de 30 s.
+  - platform: template
+    id: wifi_connect_button
+    name: "Se connecter à ce Wi-Fi"
+    icon: "mdi:wifi-arrow-right"
+    entity_category: "config"
+    web_server:
+      sorting_group_id: wifi_group
+      sorting_weight: 30
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              const auto &pw = id(wifi_new_password).state;
+              return id(wifi_new_ssid).state.empty() || (!pw.empty() && pw.size() < 8);
+          then:
+            - text_sensor.template.publish:
+                id: wifi_change_status
+                state: "Nom du réseau manquant ou mot de passe trop court (8 caractères minimum)"
+          else:
+            - text_sensor.template.publish:
+                id: wifi_change_status
+                state: !lambda 'return "Connexion à " + id(wifi_new_ssid).state + "…";'
+            - wifi.configure:
+                ssid: !lambda return id(wifi_new_ssid).state;
+                password: !lambda return id(wifi_new_password).state;
+                save: true
+                timeout: 30s
+                on_connect:
+                  - text_sensor.template.publish:
+                      id: wifi_change_status
+                      state: !lambda 'return "Connecté à " + id(wifi_new_ssid).state;'
+                  - text.set:
+                      id: wifi_new_password
+                      value: ""
+                on_error:
+                  - text_sensor.template.publish:
+                      id: wifi_change_status
+                      state: !lambda 'return "Échec de la connexion à " + id(wifi_new_ssid).state + " : retour au réseau précédent";'
+  # Installe la dernière version publiée, même sur un build « dev », avec « Auto-Update » coupé,
+  # ou si la version est identique (réinstallation).
+  - platform: template
+    id: force_update_button
+    name: "Forcer la mise à jour"
+    icon: "mdi:cloud-download"
+    entity_category: "config"
+    on_press:
+      - logger.log: "Mise à jour forcée : lecture du manifest..."
+      - component.update: update_http_request
+      - wait_until:
+          condition:
+            lambda: return !id(update_http_request).update_info.firmware_url.empty();
+          timeout: 30s
+      - if:
+          condition:
+            lambda: return id(update_http_request).update_info.firmware_url.empty();
+          then:
+            - logger.log:
+                level: ERROR
+                format: "Mise à jour forcée impossible : manifest illisible"
+          else:
+            - logger.log:
+                format: "Mise à jour forcée vers %s"
+                args: ['id(update_http_request).update_info.latest_version.c_str()']
+            - update.perform:
+                id: update_http_request
+                force_update: true
   - platform: template
     id: reload_tracker
     on_press:
@@ -304,6 +382,30 @@ text:
       then:
         lambda: |-
           id(tracker).get_localization()->set_hours_short_string(id(hours_short_str_config)->state);
+
+  # Changement de réseau Wi-Fi depuis le tableau de bord (bouton « Se connecter à ce Wi-Fi »)
+  - platform: template
+    id: wifi_new_ssid
+    name: "Nouveau réseau Wi-Fi"
+    icon: "mdi:wifi-plus"
+    entity_category: "config"
+    mode: text
+    max_length: 32
+    optimistic: true
+    web_server:
+      sorting_group_id: wifi_group
+      sorting_weight: 10
+  - platform: template
+    id: wifi_new_password
+    name: "Mot de passe Wi-Fi"
+    icon: "mdi:form-textbox-password"
+    entity_category: "config"
+    mode: password
+    max_length: 64
+    optimistic: true
+    web_server:
+      sorting_group_id: wifi_group
+      sorting_weight: 20
 
 select:
   - platform: template
@@ -560,11 +662,42 @@ lis3dh:
 debug:
 
 text_sensor:
+  - platform: wifi_info
+    ssid:
+      name: "Wi-Fi connecté"
+      icon: "mdi:wifi"
+      entity_category: "diagnostic"
+      web_server:
+        sorting_group_id: wifi_group
+        sorting_weight: 1
+    ip_address:
+      name: "Adresse IP"
+      icon: "mdi:ip-network"
+      entity_category: "diagnostic"
+      web_server:
+        sorting_group_id: wifi_group
+        sorting_weight: 2
+    scan_results:
+      name: "Réseaux Wi-Fi visibles"
+      icon: "mdi:wifi-refresh"
+      entity_category: "diagnostic"
+      web_server:
+        sorting_group_id: wifi_group
+        sorting_weight: 3
+  - platform: template
+    id: wifi_change_status
+    name: "Changement de Wi-Fi"
+    icon: "mdi:information-outline"
+    entity_category: "diagnostic"
+    update_interval: never
+    web_server:
+      sorting_group_id: wifi_group
+      sorting_weight: 40
   - platform: template
     name: "Stations V'Lille trouvées"
     icon: "mdi:bicycle"
     entity_category: "diagnostic"
-    update_interval: 30s
+    update_interval: 60s
     lambda: return id(tracker).get_vlille_status();
   - platform: debug
     device:
@@ -595,6 +728,9 @@ sensor:
     name: "Wi-Fi Signal"
     update_interval: 60s
     entity_category: "diagnostic"
+    web_server:
+      sorting_group_id: wifi_group
+      sorting_weight: 4
   - platform: template
     id: last_ota_error
     name: "Last OTA Error"
@@ -664,6 +800,10 @@ time:
 
 web_server:
   version: 3
+  sorting_groups:
+    - id: wifi_group
+      name: "Wi-Fi"
+      sorting_weight: 50
   # Bouton « Configuration YAML » : édition en direct de la configuration du configurateur
   js_include: web/config-editor.js
 
@@ -673,6 +813,12 @@ transit_tracker:
   # les mises à jour (la vérification faite à la connexion Wi-Fi échoue souvent, DNS pas prêt).
   on_loaded:
     - component.update: update_http_request
+  # Panneau « Wi-Fi » du tableau de bord : réseaux visibles et connexion en un clic
+  wifi_manager:
+    ssid: wifi_new_ssid
+    password: wifi_new_password
+    connect: wifi_connect_button
+    status: wifi_change_status
   alerts:
     # Remplacée au démarrage par l'entité texte « URL des alertes » (modifiable depuis l'interface web)
     url: "https://api.mobilille.fr/v1/alerts/"
@@ -698,7 +844,7 @@ transit_tracker:
   # (stations à saisir dans « Stations V'Lille » sur le tableau de bord)
   vlille:
     url: "https://api.mobilille.fr/v1/vlille/"   # ?simple=1 pour trouver les stations, ?ids=… pour leurs données
-    update_interval: 60s   # rafraîchissement des données
+    update_interval: 90s   # rafraîchissement des données
     interval: 60s          # temps entre deux passages sur les stations
     duration: 6s           # durée par station (remplacée par « Durée écran V'Lille »)
   # Courses annulées / arrêts non desservis (GTFS-RT). Nécessite l'API modifiée.

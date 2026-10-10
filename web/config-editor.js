@@ -368,8 +368,257 @@ function createUi() {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", createUi);
-} else {
+// ---------------------------------------------------------------------------
+// Panneau Wi-Fi : réseaux visibles et connexion (endpoint `transit_tracker: wifi_manager:`)
+// ---------------------------------------------------------------------------
+
+const WIFI_ENDPOINT = "/transit-tracker/wifi";
+
+const WIFI_STYLE = `
+#tt-wifi-open {
+  position: fixed; right: 16px; bottom: 64px; z-index: 1000;
+  padding: 10px 16px; border: 0; border-radius: 999px; cursor: pointer;
+  font: 500 14px system-ui, sans-serif; color: #fff; background: #03a9f4;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+#tt-wifi-dialog {
+  --bg: #fff; --fg: #1c1c1c; --muted: #6b6b6b; --border: #d0d0d0; --field: #f3f3f3; --hover: #eaf6fd;
+  --ok: #1b7f3b; --err: #c62828;
+  width: min(520px, calc(100vw - 32px)); max-height: min(85vh, 760px); padding: 0;
+  border: 1px solid var(--border); border-radius: 12px; color: var(--fg); background: var(--bg);
+  font: 14px system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  #tt-wifi-dialog {
+    --bg: #1e1e1e; --fg: #e6e6e6; --muted: #9a9a9a; --border: #3a3a3a; --field: #2a2a2a; --hover: #10364a;
+    --ok: #5fd38a; --err: #ff6b6b;
+  }
+}
+#tt-wifi-dialog[open] { display: flex; flex-direction: column; }
+#tt-wifi-dialog::backdrop { background: rgba(0,0,0,.5); }
+#tt-wifi-dialog header, #tt-wifi-dialog footer { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+#tt-wifi-dialog header { border-bottom: 1px solid var(--border); }
+#tt-wifi-dialog footer { border-top: 1px solid var(--border); flex-wrap: wrap; }
+#tt-wifi-dialog h2 { margin: 0; font-size: 16px; flex: 1; }
+#tt-wifi-dialog .current { padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--muted); }
+#tt-wifi-dialog .current b { color: var(--fg); }
+#tt-wifi-dialog ul { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; min-height: 120px; }
+#tt-wifi-dialog li button {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border: 0;
+  background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+}
+#tt-wifi-dialog li button:hover, #tt-wifi-dialog li button:focus-visible { background: var(--hover); outline: none; }
+#tt-wifi-dialog li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tt-wifi-dialog li .meta { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#tt-wifi-dialog li.connected .name::after { content: " · connecté"; color: var(--ok); }
+#tt-wifi-dialog .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+#tt-wifi-dialog .bars i { width: 3px; background: var(--border); border-radius: 1px; }
+#tt-wifi-dialog .bars i.on { background: var(--fg); }
+#tt-wifi-dialog .empty { padding: 16px; color: var(--muted); }
+#tt-wifi-dialog form { display: grid; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+#tt-wifi-dialog form[hidden] { display: none; }
+#tt-wifi-dialog label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+#tt-wifi-dialog input {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit;
+  color: var(--fg); background: var(--field);
+}
+#tt-wifi-dialog .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+#tt-wifi-dialog .status { flex: 1; min-width: 200px; color: var(--muted); }
+#tt-wifi-dialog .status.ok { color: var(--ok); }
+#tt-wifi-dialog .status.err { color: var(--err); }
+#tt-wifi-dialog button.btn {
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+  font: inherit; color: var(--fg); background: transparent;
+}
+#tt-wifi-dialog button.primary { border-color: #03a9f4; color: #fff; background: #03a9f4; }
+#tt-wifi-dialog button:disabled { opacity: .5; cursor: default; }
+`;
+
+function signalBars(rssi) {
+  const level = rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+  return `<span class="bars" aria-hidden="true">${[5, 8, 11, 14]
+    .map((h, i) => `<i style="height:${h}px" class="${i < level ? "on" : ""}"></i>`).join("")}</span>`;
+}
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+function createWifiUi() {
+  const style = document.createElement("style");
+  style.textContent = WIFI_STYLE;
+  document.head.appendChild(style);
+
+  const open = document.createElement("button");
+  open.id = "tt-wifi-open";
+  open.textContent = "Wi-Fi";
+  document.body.appendChild(open);
+
+  const dialog = document.createElement("dialog");
+  dialog.id = "tt-wifi-dialog";
+  dialog.innerHTML = `
+    <header>
+      <h2>Wi-Fi</h2>
+      <button type="button" class="btn" data-action="close" aria-label="Fermer">✕</button>
+    </header>
+    <div class="current"></div>
+    <ul aria-label="Réseaux visibles"></ul>
+    <form hidden>
+      <label>Réseau <input id="tt-wifi-ssid" name="ssid" maxlength="32" autocomplete="off" required></label>
+      <label>Mot de passe <input id="tt-wifi-password" name="password" type="password" maxlength="64"
+        autocomplete="off" placeholder="Laisser vide pour un réseau ouvert"></label>
+      <div class="row">
+        <button type="button" class="btn" data-action="cancel">Annuler</button>
+        <button type="submit" class="btn primary">Se connecter</button>
+      </div>
+    </form>
+    <footer>
+      <span class="status"></span>
+      <button type="button" class="btn" data-action="other">Autre réseau…</button>
+      <button type="button" class="btn" data-action="scan">Rechercher</button>
+    </footer>`;
+  document.body.appendChild(dialog);
+
+  const current = dialog.querySelector(".current");
+  const list = dialog.querySelector("ul");
+  const form = dialog.querySelector("form");
+  const ssidInput = form.querySelector("#tt-wifi-ssid");
+  const passwordInput = form.querySelector("#tt-wifi-password");
+  const status = dialog.querySelector(".status");
+  const scanButton = dialog.querySelector('[data-action="scan"]');
+  let pollTimer = null;
+  let lastState = null;
+  let connectingTo = null;
+
+  const setStatus = (message, kind = "") => {
+    status.textContent = message;
+    status.className = `status ${kind}`;
+  };
+
+  function render(state) {
+    lastState = state;
+    current.innerHTML = state.connected
+      ? `Connecté à <b>${escapeHtml(state.ssid)}</b> · ${escapeHtml(state.ip)} · ${state.rssi} dBm`
+      : "Non connecté";
+
+    if (state.networks.length === 0) {
+      list.innerHTML = `<li class="empty">${state.scanning ? "Recherche des réseaux…" : "Aucun réseau trouvé. Lance une recherche."}</li>`;
+    } else {
+      list.innerHTML = state.networks.map((n, i) => `
+        <li class="${state.connected && n.ssid === state.ssid ? "connected" : ""}">
+          <button type="button" data-index="${i}">
+            ${signalBars(n.rssi)}
+            <span class="name">${escapeHtml(n.ssid)}</span>
+            <span class="meta">${n.lock ? "🔒 " : ""}${n.rssi} dBm</span>
+          </button>
+        </li>`).join("");
+    }
+    scanButton.disabled = state.scanning;
+    scanButton.textContent = state.scanning ? "Recherche…" : "Rechercher";
+
+    // The status keeps the previous attempt's message: only follow the one about this network
+    if (connectingTo !== null && state.status && state.status.includes(connectingTo)) {
+      const failed = state.status.startsWith("Échec");
+      const done = failed || state.status.startsWith("Connecté");
+      setStatus(state.status, failed ? "err" : done ? "ok" : "");
+      if (done) connectingTo = null;
+    }
+  }
+
+  async function refresh() {
+    try {
+      const response = await fetch(WIFI_ENDPOINT, { cache: "no-store" });
+      if (!response.ok) throw new Error(`L'appareil a répondu ${response.status}`);
+      render(await response.json());
+    } catch (e) {
+      // Après un changement de réseau, l'appareil n'est plus joignable à cette adresse
+      if (connectingTo !== null) {
+        setStatus(`Connexion à ${connectingTo} en cours. Si elle réussit, l'afficheur aura une nouvelle adresse IP ` +
+          "(appuie sur ses deux boutons pour l'afficher). En cas d'échec, il revient ici dans 30 s.");
+      } else {
+        setStatus(e.message, "err");
+      }
+    }
+  }
+
+  async function scan() {
+    scanButton.disabled = true;
+    try {
+      await fetch(`${WIFI_ENDPOINT}/scan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    } catch (e) {
+      setStatus(e.message, "err");
+    }
+    refresh();
+  }
+
+  function showForm(ssid) {
+    form.hidden = false;
+    ssidInput.value = ssid;
+    passwordInput.value = "";
+    (ssid ? passwordInput : ssidInput).focus();
+  }
+
+  function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(refresh, 1500);
+  }
+  function stopPolling() {
+    if (pollTimer !== null) clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  open.addEventListener("click", () => {
+    dialog.showModal();
+    form.hidden = true;
+    setStatus("");
+    refresh();
+    scan();
+    startPolling();
+  });
+  dialog.addEventListener("close", stopPolling);
+  dialog.querySelector('[data-action="close"]').addEventListener("click", () => dialog.close());
+  dialog.querySelector('[data-action="cancel"]').addEventListener("click", () => { form.hidden = true; });
+  dialog.querySelector('[data-action="other"]').addEventListener("click", () => showForm(""));
+  scanButton.addEventListener("click", scan);
+
+  list.addEventListener("click", (e) => {
+    const item = e.target.closest("button[data-index]");
+    if (!item || !lastState) return;
+    showForm(lastState.networks[Number(item.dataset.index)].ssid);
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const ssid = ssidInput.value.trim();
+    const password = passwordInput.value;
+    if (password && password.length < 8) {
+      setStatus("Le mot de passe doit faire au moins 8 caractères (ou rester vide pour un réseau ouvert).", "err");
+      return;
+    }
+    try {
+      const response = await fetch(`${WIFI_ENDPOINT}/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ssid, password }),
+      });
+      if (!response.ok) throw new Error((await response.text()) || `L'appareil a répondu ${response.status}`);
+      connectingTo = ssid;
+      form.hidden = true;
+      passwordInput.value = "";
+      setStatus(`Connexion à ${ssid}…`);
+    } catch (err) {
+      setStatus(err.message, "err");
+    }
+  });
+}
+
+function init() {
   createUi();
+  createWifiUi();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
 }
